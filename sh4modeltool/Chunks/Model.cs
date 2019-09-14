@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
+using System.Numerics;
 
 namespace sh4modeltool.Chunks
 {
@@ -67,22 +68,32 @@ namespace sh4modeltool.Chunks
 
         public ModelScale[] modelScales = new ModelScale[1];
 
-        public UnknownChunk unknownChunk = new UnknownChunk();
+        public Part part = new Part();
 
         // The good stuff
-        public Part[] parts;
+        public SubPart[] subParts;
 
 
-        public class UnknownChunk
+        public class Part
         {
             // Always seems to be 0xFF, but could be something else in some models
             public uint unknownMagic = 0xFF;
 
-            public byte[] unknownChunk = new byte[0x3c];
+            public byte[] unknownChunk = new byte[0xc];
+
+            // Whether or not the mesh uses textures
+            public int usesTextures;
+
+            public byte[] unknownChunk2 = new byte[0x10];
+
+            // The index of the texture the part uses
+            public int textureToUse;
+
+            public byte[] unknownChunk3 = new byte[0x18];
 
             public UnknownFloatChunk[] unknownFloatChunks = new UnknownFloatChunk[8];
 
-            public byte[] unknownChunk2 = new byte[0x10];
+            public byte[] unknownChunk4 = new byte[0x10];
 
             public class UnknownFloatChunk
             {
@@ -91,14 +102,14 @@ namespace sh4modeltool.Chunks
             }
         }
 
-        public class Part
+        public class SubPart
         {
 
-            public uint partSize;
+            public uint subPartSize;
 
             public byte[] unknownChunk = new byte[0x4c];
 
-            public UnknownFloatChunk[] unknownFloatChunk = new UnknownFloatChunk[4];
+            public ColorChunk[] colorChunk = new ColorChunk[4];
 
             public byte[] unknownChunk2 = new byte[0x6c];
 
@@ -117,9 +128,12 @@ namespace sh4modeltool.Chunks
             // Always seems to be 17 0xFFs following the padding after triangle strips
             public byte[] FFArray;
 
-            public class UnknownFloatChunk
+            public class ColorChunk
             {
-                public float[] unknown = new float[4];
+                public float red;
+                public float green;
+                public float blue;
+                public float alpha;
             }
 
             public class Vertex

@@ -3,10 +3,18 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.IO;
-using Assimp;
+using System.Numerics;
+
+// Sharp GLTF
+using SharpGLTF.Geometry;
+using SharpGLTF.Geometry.VertexTypes;
+using SharpGLTF.Materials;
+using SharpGLTF.Schema2;
 
 namespace sh4modeltool
 {
+    using VERTEX = SharpGLTF.Geometry.VertexTypes.VertexPosition;
+
     class Program
     {
         static void Main(string[] args)
@@ -69,13 +77,13 @@ namespace sh4modeltool
                 }
             }
 
-            model.unknownChunk.unknownMagic = reader.ReadUInt32();
+            model.part.unknownMagic = reader.ReadUInt32();
 
-            model.unknownChunk.unknownChunk = reader.ReadBytes(0x3c);
+            model.part.unknownChunk = reader.ReadBytes(0x3c);
 
-            model.unknownChunk.unknownFloatChunks = new Chunks.Model.UnknownChunk.UnknownFloatChunk[8].Select(p => new Chunks.Model.UnknownChunk.UnknownFloatChunk()).ToArray();
+            model.part.unknownFloatChunks = new Chunks.Model.Part.UnknownFloatChunk[8].Select(p => new Chunks.Model.Part.UnknownFloatChunk()).ToArray();
 
-            foreach (var chunk in model.unknownChunk.unknownFloatChunks)
+            foreach (var chunk in model.part.unknownFloatChunks)
             {
                 for(var i =0;i < 3;i++)
                 {
@@ -84,41 +92,74 @@ namespace sh4modeltool
                 chunk.unknown2 = reader.ReadUInt32();
             }
 
-            model.unknownChunk.unknownChunk2 = reader.ReadBytes(0x10);
+            // Check for an unknown section
+            int check = reader.ReadInt32();
+            if(check != 0)
+            {
+                reader.ReadInt16();
+                int count = reader.ReadInt16();
 
-            model.parts = new Chunks.Model.Part[model.numSubParts].Select(p => new Chunks.Model.Part()).ToArray();
+                reader.ReadBytes(0x8);
+
+                if (count % 2 == 1)
+                {
+                    // Read whatever this is
+                    // TODO: Add this to the structure
+                    reader.ReadBytes(0xC * count);
+
+                    // Skip padding
+                    reader.ReadUInt32();
+                }
+                else
+                {
+                    // Read whatever this is
+                    // TODO: Add this to the structure
+                    reader.ReadBytes(0xC * count);
+
+                    // No padding this time because it's an even number of whatever this is
+                }
+
+            }
+            else
+            {
+                reader.BaseStream.Position = reader.BaseStream.Position - 4;
+                model.part.unknownChunk2 = reader.ReadBytes(0x10);
+            }
+
+
+            model.subParts = new Chunks.Model.SubPart[model.numSubParts].Select(p => new Chunks.Model.SubPart()).ToArray();
 
             // Now for the fun part :)
             for (var i=0;i<model.numSubParts;i++)
             {
-                model.parts[i].partSize = reader.ReadUInt32();
+                model.subParts[i].subPartSize = reader.ReadUInt32();
 
-                model.parts[i].unknownChunk = reader.ReadBytes(0x4c);
+                model.subParts[i].unknownChunk = reader.ReadBytes(0x4c);
 
-                model.parts[i].unknownFloatChunk = new Chunks.Model.Part.UnknownFloatChunk[4].Select(v => new Chunks.Model.Part.UnknownFloatChunk()).ToArray();
+                model.subParts[i].colorChunk = new Chunks.Model.SubPart.ColorChunk[4].Select(v => new Chunks.Model.SubPart.ColorChunk()).ToArray();
 
 
-                foreach (var chunk in model.parts[i].unknownFloatChunk)
+                foreach (var chunk in model.subParts[i].colorChunk)
                 {
-                    for(var chunkCount=0;chunkCount < chunk.unknown.Length;chunkCount++)
-                    {
-                        chunk.unknown[chunkCount] = reader.ReadSingle();
-                    }
+                    chunk.red = reader.ReadSingle();
+                    chunk.green = reader.ReadSingle();
+                    chunk.blue = reader.ReadSingle();
+                    chunk.alpha = reader.ReadSingle();
                 }
 
-                model.unknownChunk.unknownChunk2 = reader.ReadBytes(0x6c);
+                model.part.unknownChunk2 = reader.ReadBytes(0x6c);
 
-                model.parts[i].triStripCount = reader.ReadUInt32();
-                model.parts[i].vertexCount = reader.ReadUInt32();
-                model.parts[i].unknown = reader.ReadUInt32();
+                model.subParts[i].triStripCount = reader.ReadUInt32();
+                model.subParts[i].vertexCount = reader.ReadUInt32();
+                model.subParts[i].unknown = reader.ReadUInt32();
 
-                model.parts[i].vertices = new Chunks.Model.Part.Vertex[model.parts[i].vertexCount].Select(v => new Chunks.Model.Part.Vertex()).ToArray();
-                model.parts[i].triStrips = new Chunks.Model.Part.TriangleStripFace[model.parts[i].triStripCount].Select(v => new Chunks.Model.Part.TriangleStripFace()).ToArray();
+                model.subParts[i].vertices = new Chunks.Model.SubPart.Vertex[model.subParts[i].vertexCount].Select(v => new Chunks.Model.SubPart.Vertex()).ToArray();
+                model.subParts[i].triStrips = new Chunks.Model.SubPart.TriangleStripFace[model.subParts[i].triStripCount].Select(v => new Chunks.Model.SubPart.TriangleStripFace()).ToArray();
 
                 reader.ReadBytes(0x10);
 
                 // Read vertices
-                foreach (var vert in model.parts[i].vertices)
+                foreach (var vert in model.subParts[i].vertices)
                 {
                     vert.x = reader.ReadSingle();
                     vert.y = reader.ReadSingle();
@@ -132,14 +173,37 @@ namespace sh4modeltool
                     reader.ReadBytes(0x20);
                 }
 
-                foreach(var triStrip in model.parts[i].triStrips)
+                int count = 0;
+                foreach(var triStrip in model.subParts[i].triStrips)
                 {
+                    if(count == 0)
+                    {
+                        // Check for padding
+                        long origBaseStreamPos = reader.BaseStream.Position;
+
+                        reader.ReadBytes(Convert.ToInt32(model.subParts[i].triStripCount) * 0x2);
+
+                        // We skip to where the end of the triangle strips should be and read 0x4 bytes
+                        // This will always be 0 if the triangle strip has truly ended
+                        // If it is not 0, then we need to go to the beginning of the triangle strips and seek 0x2 bytes forward and read as normal
+                        // This accounts for padding that seems to crop up every now and then, for whatever reason
+                        if(reader.ReadUInt32() != 0)
+                        {
+                            reader.BaseStream.Position = origBaseStreamPos + 0x2;
+                        }
+                        else
+                        {
+                            reader.BaseStream.Position = origBaseStreamPos;
+                        }
+                    }
                     triStrip.index = reader.ReadInt16();
+
+                    count++;
                 }
 
-                model.parts[i].padding = reader.ReadUInt32();
+                model.subParts[i].padding = reader.ReadUInt32();
 
-                model.parts[i].FFArray = reader.ReadBytes(0x4c);
+                model.subParts[i].FFArray = reader.ReadBytes(0x4c);
 
 
             }
@@ -148,50 +212,50 @@ namespace sh4modeltool
 
             int partsWritten = 0;
 
-            foreach(var part in model.parts)
+            foreach(var part in model.subParts)
             {
-                StreamWriter writer = new StreamWriter(new FileStream(partsWritten+".obj", FileMode.Create));
+
+                StreamWriter writer = new StreamWriter(new FileStream(partsWritten + ".obj", FileMode.Create));
 
                 writer.Write("# Silent Hill 4 Model\n");
                 writer.Write("# Ripped by sh4modeltool, 2019 Hunter Stanton\n");
                 foreach (var vert in part.vertices)
                 {
-                    writer.Write("v "+vert.x+" "+-vert.y+" "+vert.z+"\n");
+                    writer.Write("v " + vert.x + " " + -vert.y + " " + vert.z + "\n");
                 }
+
 
                 for (var i = 0; i < part.triStripCount; i++)
                 {
-                    if (i%2 == 1)
+                    if(i == part.triStripCount - 2)
                     {
-                        if (i != part.triStripCount - 2)
-                        {
-                            var a = part.triStrips[i].index + 1;
-                            var b = part.triStrips[i + 1].index + 1;
-                            var c = part.triStrips[i + 2].index + 1;
+                        break;
+                    }
+                    if (i % 2 == 1)
+                    {
+                        var a = part.triStrips[i].index + 1;
+                        var b = part.triStrips[i + 1].index + 1;
+                        var c = part.triStrips[i + 2].index + 1;
 
-                            // Remove triangles that are degenerate
-                            if (a == b || a == c || b == c)
-                                continue;
+                        // Remove triangles that are degenerate
+                        if (a == b || a == c || b == c)
+                            continue;
 
-                            // Write a face command for a triangle
-                            writer.Write("f " + c + " " + b + " " + a + "\n");
-                        }
+                        // Write a face command for a triangle
+                        writer.Write("f " + c + " " + b + " " + a + "\n");
                     }
                     else
                     {
-                        if (i != part.triStripCount - 1)
-                        {
-                            var a = part.triStrips[i].index + 1;
-                            var b = part.triStrips[i + 1].index + 1;
-                            var c = part.triStrips[i + 2].index + 1;
+                        var a = part.triStrips[i].index + 1;
+                        var b = part.triStrips[i + 1].index + 1;
+                        var c = part.triStrips[i + 2].index + 1;
 
-                            // Remove triangles that are degenerate
-                            if (a == b || a == c || b == c)
-                                continue;
+                        // Remove triangles that are degenerate
+                        if (a == b || a == c || b == c)
+                            continue;
 
-                            // Write a face command for a triangle
-                            writer.Write("f " + a + " " + b + " " + c + "\n");
-                        }
+                        // Write a face command for a triangle
+                        writer.Write("f " + a + " " + b + " " + c + "\n");
                     }
                 }
 
